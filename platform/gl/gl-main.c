@@ -163,6 +163,7 @@ static const char *fix_title = "MuPDFGL";
 static const char *title = "MuPDF/GL";
 static fz_document *doc = NULL;
 static fz_page *page = NULL;
+static fz_page *page2 = NULL;
 static pdf_document *pdf = NULL;
 static fz_outline *outline = NULL;
 static fz_link *links = NULL;
@@ -191,6 +192,7 @@ static int showlinks = 0;
 static int showsearch = 0;
 static int showinfo = 0;
 static int showhelp = 0;
+static int showdualpage = 0;
 
 static int history_count = 0;
 static int history[256];
@@ -229,7 +231,7 @@ static void update_title(void)
 	glfwSetWindowTitle(window, buf);
 }
 
-void texture_from_pixmap(struct texture *tex, fz_pixmap *pix)
+void texture_from_pixmap(struct texture *tex, fz_pixmap *pix, int offset, fz_pixmap *pix2)
 {
 	if (!tex->id)
 		glGenTextures(1, &tex->id);
@@ -237,17 +239,39 @@ void texture_from_pixmap(struct texture *tex, fz_pixmap *pix)
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 
-	tex->x = pix->x;
+	tex->x = pix->x + offset;
 	tex->y = pix->y;
 	tex->w = pix->w;
 	tex->h = pix->h;
+	if (pix2)
+	{
+	  tex->w += pix2->w;
+	  if (tex->h < pix2->h)
+	    tex->h = pix2->h;
+	}
 
 	if (has_ARB_texture_non_power_of_two)
 	{
 		if (tex->w > max_texture_size || tex->h > max_texture_size)
 			fz_warn(ctx, "texture size (%d x %d) exceeds implementation limit (%d)", tex->w, tex->h, max_texture_size);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex->w, tex->h, 0, pix->n == 4 ? GL_RGBA : GL_RGB, GL_UNSIGNED_BYTE, pix->samples);
+		if (pix2)
+		{
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex->w, tex->h, 0,
+				     GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, pix->w, pix->h,
+					pix->n == 4 ? GL_RGBA : GL_RGB,
+					GL_UNSIGNED_BYTE, pix->samples);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, pix->w, 0, pix2->w, pix2->h,
+					pix2->n == 4 ? GL_RGBA : GL_RGB,
+					GL_UNSIGNED_BYTE, pix2->samples);
+		}
+		else
+		{
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex->w, tex->h, 0,
+				     pix->n == 4 ? GL_RGBA : GL_RGB, GL_UNSIGNED_BYTE,
+				     pix->samples);
+		}
 		tex->s = 1;
 		tex->t = 1;
 	}
@@ -259,45 +283,79 @@ void texture_from_pixmap(struct texture *tex, fz_pixmap *pix)
 			fz_warn(ctx, "texture size (%d x %d) exceeds implementation limit (%d)", w2, h2, max_texture_size);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w2, h2, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tex->w, tex->h, pix->n == 4 ? GL_RGBA : GL_RGB, GL_UNSIGNED_BYTE, pix->samples);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, pix->w, pix->h,
+				pix->n == 4 ? GL_RGBA : GL_RGB, GL_UNSIGNED_BYTE,
+				pix->samples);
+		if (pix2)
+			glTexSubImage2D(GL_TEXTURE_2D, 0, pix->w, 0, pix2->w, pix2->h,
+					pix2->n == 4 ? GL_RGBA : GL_RGB,
+					GL_UNSIGNED_BYTE, pix->samples);
 		tex->s = (float) tex->w / w2;
 		tex->t = (float) tex->h / h2;
 	}
 }
 
-void render_page(void)
+static int render_annotations(fz_page *cur_page, int page_offset)
 {
 	fz_annot *annot;
 	fz_pixmap *pix;
+
+	for (annot = fz_first_annot(ctx, cur_page); annot; annot = fz_next_annot(ctx, annot))
+	{
+		pix = fz_new_pixmap_from_annot(ctx, annot, &page_ctm, fz_device_rgb(ctx), 1);
+		texture_from_pixmap(&annot_tex[annot_count++], pix, page_offset, NULL);
+		fz_drop_pixmap(ctx, pix);
+		if (annot_count >= nelem(annot_tex))
+		{
+			fz_warn(ctx, "too many annotations to display!");
+			return 1;
+		}
+	}
+	return 0;
+}
+
+void render_page(void)
+{
+	fz_pixmap *pix, *pix2;
+	int page1_width;
+	int overflow;
 
 	fz_scale(&page_ctm, currentzoom / 72, currentzoom / 72);
 	fz_pre_rotate(&page_ctm, -currentrotate);
 	fz_invert_matrix(&page_inv_ctm, &page_ctm);
 
 	fz_drop_page(ctx, page);
+	fz_drop_page(ctx, page2);
 
 	page = fz_load_page(ctx, doc, currentpage);
+	if (showdualpage && currentpage + 1 < fz_count_pages(ctx, doc))
+		page2 = fz_load_page(ctx, doc, currentpage + 1);
+	else
+		page2 = NULL;
 
 	fz_drop_link(ctx, links);
 	links = NULL;
 	links = fz_load_links(ctx, page);
 
 	pix = fz_new_pixmap_from_page_contents(ctx, page, &page_ctm, fz_device_rgb(ctx), 0);
-	texture_from_pixmap(&page_tex, pix);
+	page1_width = pix->w;
+	if (page2)
+	{
+		pix2 = fz_new_pixmap_from_page_contents(ctx, page2, &page_ctm,
+							fz_device_rgb(ctx), 0);
+		texture_from_pixmap(&page_tex, pix, 0, pix2);
+		fz_drop_pixmap(ctx, pix2);
+	}
+	else
+	{
+		texture_from_pixmap(&page_tex, pix, 0, NULL);
+	}
 	fz_drop_pixmap(ctx, pix);
 
 	annot_count = 0;
-	for (annot = fz_first_annot(ctx, page); annot; annot = fz_next_annot(ctx, annot))
-	{
-		pix = fz_new_pixmap_from_annot(ctx, annot, &page_ctm, fz_device_rgb(ctx), 1);
-		texture_from_pixmap(&annot_tex[annot_count++], pix);
-		fz_drop_pixmap(ctx, pix);
-		if (annot_count >= nelem(annot_tex))
-		{
-			fz_warn(ctx, "too many annotations to display!");
-			break;
-		}
-	}
+	overflow = render_annotations(page, 0);
+	if (page2 && !overflow)
+		render_annotations(page2, page1_width);
 }
 
 static void push_history(void)
@@ -809,6 +867,15 @@ static void toggle_outline(void)
 	}
 }
 
+static void set_dualpage(int dual)
+{
+	int is_shrinkwrap = (canvas_w == page_tex.w && canvas_h == page_tex.h);
+	showdualpage = dual;
+	render_page();
+	if (is_shrinkwrap && !isfullscreen)
+		shrinkwrap();
+}
+
 static void auto_zoom_w(void)
 {
 	currentzoom = fz_clamp(currentzoom * canvas_w / page_tex.w, MINRES, MAXRES);
@@ -926,6 +993,8 @@ static void do_app(void)
 		case '>': currentpage += 10 * fz_maxi(number, 1); break;
 		case 'g': jump_to_page(number - 1); break;
 		case 'G': jump_to_page(fz_count_pages(ctx, doc) - 1); break;
+		case 's': set_dualpage(0); break;
+		case 'd': set_dualpage(1); break;
 
 		case 'm':
 			if (number == 0)
@@ -1085,7 +1154,7 @@ static void do_help(void)
 	int x = canvas_x + 4 * ui.lineheight;
 	int y = canvas_y + 4 * ui.lineheight;
 	int w = canvas_w - 8 * ui.lineheight;
-	int h = 37 * ui.lineheight;
+	int h = 39 * ui.lineheight;
 
 	glBegin(GL_TRIANGLE_STRIP);
 	{
@@ -1114,6 +1183,8 @@ static void do_help(void)
 	y = do_help_line(x, y, "w", "shrink wrap window");
 	y = do_help_line(x, y, "W or H", "fit to width or height");
 	y = do_help_line(x, y, "Z", "fit to page");
+	y = do_help_line(x, y, "d", "dual-page mode");
+	y = do_help_line(x, y, "s", "single-page mode");
 	y = do_help_line(x, y, "z", "reset zoom");
 	y = do_help_line(x, y, "N z", "set zoom to N");
 	y = do_help_line(x, y, "+ or -", "zoom in or out");
@@ -1446,6 +1517,7 @@ static void usage(const char *argv0)
 	fprintf(stderr, "\t-S -\tfont size for EPUB layout\n");
 	fprintf(stderr, "\t-U -\tuser style sheet for EPUB layout\n");
 	fprintf(stderr, "\t-X\tdisable document styles for EPUB layout\n");
+	fprintf(stderr, "\t-d\tenable dual-page mode\n");
 	exit(1);
 }
 
@@ -1458,7 +1530,7 @@ int main(int argc, char **argv)
 	const GLFWvidmode *video_mode;
 	int c;
 
-	while ((c = fz_getopt(argc, argv, "p:r:W:H:S:U:X")) != -1)
+	while ((c = fz_getopt(argc, argv, "p:r:W:H:S:U:Xd")) != -1)
 	{
 		switch (c)
 		{
@@ -1470,6 +1542,7 @@ int main(int argc, char **argv)
 		case 'S': layout_em = fz_atof(fz_optarg); break;
 		case 'U': layout_css = fz_optarg; break;
 		case 'X': layout_use_doc_css = 0; break;
+		case 'd': showdualpage = 1; break;
 		}
 	}
 
@@ -1516,7 +1589,8 @@ int main(int argc, char **argv)
 	screen_w = video_mode->width;
 	screen_h = video_mode->height;
 
-	window = glfwCreateWindow(DEFAULT_WINDOW_W, DEFAULT_WINDOW_H, fix_title, NULL, NULL);
+	window = glfwCreateWindow(DEFAULT_WINDOW_W * (showdualpage + 1), DEFAULT_WINDOW_H,
+				  fix_title, NULL, NULL);
 	if (!window) {
 		fprintf(stderr, "cannot create glfw window\n");
 		exit(1);
