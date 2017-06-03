@@ -427,6 +427,7 @@ static void do_copy_region(fz_rect *screen_sel, int xofs, int yofs)
 {
 	fz_buffer *buf;
 	fz_rect page_sel;
+	fz_page *which_page = page;
 
 	xofs -= page_tex.x;
 	yofs -= page_tex.y;
@@ -436,12 +437,19 @@ static void do_copy_region(fz_rect *screen_sel, int xofs, int yofs)
 	page_sel.x1 = screen_sel->x1 - xofs;
 	page_sel.y1 = screen_sel->y1 - yofs;
 
+	if (showdualpage && page2 && page_sel.x0 >= dualpage_xoffset)
+	{
+		which_page = page2;
+		page_sel.x0 -= dualpage_xoffset;
+		page_sel.x1 -= dualpage_xoffset;
+	}
+
 	fz_transform_rect(&page_sel, &page_inv_ctm);
 
 #ifdef _WIN32
-	buf = fz_new_buffer_from_page(ctx, page, &page_sel, 1, NULL);
+	buf = fz_new_buffer_from_page(ctx, which_page, &page_sel, 1, NULL);
 #else
-	buf = fz_new_buffer_from_page(ctx, page, &page_sel, 0, NULL);
+	buf = fz_new_buffer_from_page(ctx, which_page, &page_sel, 0, NULL);
 #endif
 	glfwSetClipboardString(window, fz_string_from_buffer(ctx, buf));
 	fz_drop_buffer(ctx, buf);
