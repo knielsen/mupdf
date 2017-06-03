@@ -400,6 +400,8 @@ static void clear_future(void)
 static void jump_to_page(int newpage)
 {
 	newpage = fz_clampi(newpage, 0, fz_count_pages(ctx, doc) - 1);
+	if (showdualpage)
+		newpage &= ~1;
 	clear_future();
 	push_history();
 	currentpage = newpage;
@@ -927,7 +929,13 @@ static void smart_move_backward(void)
 	{
 		if (scroll_x <= 0)
 		{
-			if (currentpage - 1 >= 0)
+			if (showdualpage && currentpage - 2 >= 0)
+			{
+				scroll_x = page_tex.w;
+				scroll_y = page_tex.h;
+				currentpage -= 2;
+			}
+			else if (currentpage - 1 >= 0)
 			{
 				scroll_x = page_tex.w;
 				scroll_y = page_tex.h;
@@ -952,7 +960,14 @@ static void smart_move_forward(void)
 	{
 		if (scroll_x + canvas_w >= page_tex.w)
 		{
-			if (currentpage + 1 < fz_count_pages(ctx, doc))
+			int total_pages = fz_count_pages(ctx, doc);
+			if (showdualpage && currentpage + 2 < total_pages)
+			{
+				scroll_x = 0;
+				scroll_y = 0;
+				currentpage += 2;
+			}
+			else if (currentpage + 1 < total_pages)
 			{
 				scroll_x = 0;
 				scroll_y = 0;
@@ -978,6 +993,8 @@ static void quit(void)
 
 static void do_app(void)
 {
+	int dual_factor = (showdualpage ? 2 : 1);
+
 	if (ui.key == KEY_F4 && ui.mod == GLFW_MOD_ALT)
 		quit();
 
@@ -1012,8 +1029,8 @@ static void do_app(void)
 
 		case 'b': number = fz_maxi(number, 1); while (number--) smart_move_backward(); break;
 		case ' ': number = fz_maxi(number, 1); while (number--) smart_move_forward(); break;
-		case ',': case KEY_PAGE_UP: currentpage -= fz_maxi(number, 1); break;
-		case '.': case KEY_PAGE_DOWN: currentpage += fz_maxi(number, 1); break;
+		case ',': case KEY_PAGE_UP: currentpage -= dual_factor * fz_maxi(number, 1); break;
+		case '.': case KEY_PAGE_DOWN: currentpage += dual_factor * fz_maxi(number, 1); break;
 		case '<': currentpage -= 10 * fz_maxi(number, 1); break;
 		case '>': currentpage += 10 * fz_maxi(number, 1); break;
 		case 'g': jump_to_page(number - 1); break;
