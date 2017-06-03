@@ -185,6 +185,7 @@ static int oldpage = 0, currentpage = 0;
 static float oldzoom = DEFRES, currentzoom = DEFRES;
 static float oldrotate = 0, currentrotate = 0;
 static fz_matrix page_ctm, page_inv_ctm;
+static int dualpage_xoffset = 0;
 
 static int isfullscreen = 0;
 static int showoutline = 0;
@@ -207,6 +208,9 @@ static int search_dir = 1;
 static int search_page = -1;
 static int search_hit_page = -1;
 static int search_hit_count = 0;
+static int search_hit_count2 = 0;
+static int search_hit_index = 0;
+static int search_hit_index2 = 0;
 static fz_rect search_hit_bbox[5000];
 
 static unsigned int next_power_of_two(unsigned int n)
@@ -317,7 +321,6 @@ static int render_annotations(fz_page *cur_page, int page_offset)
 void render_page(void)
 {
 	fz_pixmap *pix, *pix2;
-	int page1_width;
 	int overflow;
 
 	fz_scale(&page_ctm, currentzoom / 72, currentzoom / 72);
@@ -338,7 +341,7 @@ void render_page(void)
 	links = fz_load_links(ctx, page);
 
 	pix = fz_new_pixmap_from_page_contents(ctx, page, &page_ctm, fz_device_rgb(ctx), 0);
-	page1_width = pix->w;
+	dualpage_xoffset = pix->w;
 	if (page2)
 	{
 		pix2 = fz_new_pixmap_from_page_contents(ctx, page2, &page_ctm,
@@ -355,7 +358,7 @@ void render_page(void)
 	annot_count = 0;
 	overflow = render_annotations(page, 0);
 	if (page2 && !overflow)
-		render_annotations(page2, page1_width);
+		render_annotations(page2, dualpage_xoffset);
 }
 
 static void push_history(void)
@@ -721,14 +724,17 @@ static void do_search_hits(int xofs, int yofs)
 	glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 	glEnable(GL_BLEND);
 
-	for (i = 0; i < search_hit_count; ++i)
+	for (i = 0; i < search_hit_count + search_hit_count2; ++i)
 	{
+		int xoffset = (i >= search_hit_index && i < search_hit_index + search_hit_count ?
+			       0 : dualpage_xoffset);
+
 		r = search_hit_bbox[i];
 
 		fz_transform_rect(&r, &page_ctm);
 
 		glColor4f(1, 0, 0, 0.4f);
-		glRectf(xofs + r.x0, yofs + r.y0, xofs + r.x1, yofs + r.y1);
+		glRectf(xofs + r.x0 + xoffset, yofs + r.y0, xofs + r.x1 + xoffset, yofs + r.y1);
 	}
 
 	glDisable(GL_BLEND);
@@ -1049,7 +1055,7 @@ static void do_app(void)
 		case 'n':
 			search_dir = 1;
 			if (search_hit_page == currentpage)
-				search_page = currentpage + search_dir;
+				search_page = currentpage + (showdualpage ? 2 : 1) * search_dir;
 			else
 				search_page = currentpage;
 			if (search_page >= 0 && search_page < fz_count_pages(ctx, doc))
@@ -1072,7 +1078,9 @@ static void do_app(void)
 		while (currentrotate >= 360) currentrotate -= 360;
 
 		if (search_hit_page != currentpage)
+		{
 			search_hit_page = -1; /* clear highlights when navigating */
+		}
 
 		ui_needs_update = 1;
 
@@ -1282,8 +1290,53 @@ static void do_canvas(void)
 	{
 		do_links(links, x, y);
 		do_page_selection(x, y, x+page_tex.w, y+page_tex.h);
-		if (search_hit_page == currentpage && search_hit_count > 0)
+		if (search_hit_page == currentpage &&
+		    (search_hit_count > 0 || search_hit_count2 > 0))
 			do_search_hits(x, y);
+	}
+}
+
+static void search_forward(void)
+{
+	size_t remain = nelem(search_hit_bbox);
+	int total_pages = fz_count_pages(ctx, doc);
+
+	search_hit_count = fz_search_page_number(ctx, doc, search_page,
+						 search_needle, search_hit_bbox, remain);
+	search_hit_index = 0;
+	search_hit_count2 = 0;
+	search_hit_index2 = search_hit_count;
+	if (search_hit_count)
+	{
+		int opposing_page = search_page ^ 1;
+		/* In dual-page mode, also show search hits on the opposing page. */
+		search_hit_page = search_page;
+		if (showdualpage && opposing_page < total_pages)
+		{
+			remain -= search_hit_count;
+			search_hit_count2 = fz_search_page_number(ctx, doc, opposing_page, search_needle,
+								  search_hit_bbox + search_hit_count, remain);
+			if (opposing_page < search_page)
+			{
+				int tmp;
+				search_hit_page = opposing_page;
+				search_hit_index = search_hit_count;
+				search_hit_index2 = 0;
+				tmp = search_hit_count;
+				search_hit_count = search_hit_count2;
+				search_hit_count2 = tmp;
+			}
+		}
+		search_active = 0;
+		jump_to_page(search_hit_page);
+	}
+	else
+	{
+		search_page += search_dir;
+		if (search_page < 0 || search_page == total_pages)
+		{
+			search_active = 0;
+		}
 	}
 }
 
@@ -1313,26 +1366,9 @@ static void run_main_loop(void)
 		ui.key = ui.mod = 0;
 		ui.down = ui.middle = ui.right = 0;
 
-		while (glfwGetTime() < start_time + 0.2f)
+		while (search_active && glfwGetTime() < start_time + 0.2f)
 		{
-			search_hit_count = fz_search_page_number(ctx, doc, search_page, search_needle,
-					search_hit_bbox, nelem(search_hit_bbox));
-			if (search_hit_count)
-			{
-				search_active = 0;
-				search_hit_page = search_page;
-				jump_to_page(search_hit_page);
-				break;
-			}
-			else
-			{
-				search_page += search_dir;
-				if (search_page < 0 || search_page == fz_count_pages(ctx, doc))
-				{
-					search_active = 0;
-					break;
-				}
-			}
+			search_forward();
 		}
 
 		/* keep searching later */
