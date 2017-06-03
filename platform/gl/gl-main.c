@@ -1663,6 +1663,9 @@ int main(int argc, char **argv)
 	screen_w = video_mode->width;
 	screen_h = video_mode->height;
 
+	/* Do not auto-iconify fullscreen windows. */
+	glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+
 	window = glfwCreateWindow(DEFAULT_WINDOW_W * (showdualpage + 1), DEFAULT_WINDOW_H,
 				  fix_title, NULL, NULL);
 	if (!window) {
