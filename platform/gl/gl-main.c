@@ -167,6 +167,7 @@ static fz_page *page2 = NULL;
 static pdf_document *pdf = NULL;
 static fz_outline *outline = NULL;
 static fz_link *links = NULL;
+static fz_link *links2 = NULL;
 
 static int number = 0;
 
@@ -338,7 +339,11 @@ void render_page(void)
 
 	fz_drop_link(ctx, links);
 	links = NULL;
+	fz_drop_link(ctx, links2);
+	links2 = NULL;
 	links = fz_load_links(ctx, page);
+	if (page2)
+		links2 = fz_load_links(ctx, page2);
 
 	pix = fz_new_pixmap_from_page_contents(ctx, page, &page_ctm, fz_device_rgb(ctx), 0);
 	dualpage_xoffset = pix->w;
@@ -1289,6 +1294,8 @@ static void do_canvas(void)
 	if (!search_active)
 	{
 		do_links(links, x, y);
+		if (links2)
+			do_links(links2, x + dualpage_xoffset, y);
 		do_page_selection(x, y, x+page_tex.w, y+page_tex.h);
 		if (search_hit_page == currentpage &&
 		    (search_hit_count > 0 || search_hit_count2 > 0))
@@ -1689,7 +1696,9 @@ int main(int argc, char **argv)
 #endif
 
 	fz_drop_link(ctx, links);
+	fz_drop_link(ctx, links2);
 	fz_drop_page(ctx, page);
+	fz_drop_page(ctx, page2);
 	fz_drop_outline(ctx, outline);
 	fz_drop_document(ctx, doc);
 	fz_drop_context(ctx);
