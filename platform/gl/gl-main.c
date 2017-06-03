@@ -756,6 +756,7 @@ static void do_search_hits(int xofs, int yofs)
 static void do_forms(float xofs, float yofs)
 {
 	static int do_forms_tag = 0;
+	fz_page *which_page = page;
 	pdf_ui_event event;
 	fz_point p;
 	int i;
@@ -768,6 +769,11 @@ static void do_forms(float xofs, float yofs)
 
 	p.x = xofs - page_tex.x + ui.x;
 	p.y = xofs - page_tex.x + ui.y;
+	if (showdualpage && page2 && p.x >= dualpage_xoffset)
+	{
+		p.x -= dualpage_xoffset;
+		which_page = page2;
+	}
 	fz_transform_point(&p, &page_inv_ctm);
 
 	if (ui.down && !ui.active)
@@ -775,11 +781,11 @@ static void do_forms(float xofs, float yofs)
 		event.etype = PDF_EVENT_TYPE_POINTER;
 		event.event.pointer.pt = p;
 		event.event.pointer.ptype = PDF_POINTER_DOWN;
-		if (pdf_pass_event(ctx, pdf, (pdf_page*)page, &event))
+		if (pdf_pass_event(ctx, pdf, (pdf_page*)which_page, &event))
 		{
 			if (pdf->focus)
 				ui.active = &do_forms_tag;
-			pdf_update_page(ctx, (pdf_page*)page);
+			pdf_update_page(ctx, (pdf_page*)which_page);
 			render_page();
 			ui_needs_update = 1;
 		}
@@ -790,9 +796,9 @@ static void do_forms(float xofs, float yofs)
 		event.etype = PDF_EVENT_TYPE_POINTER;
 		event.event.pointer.pt = p;
 		event.event.pointer.ptype = PDF_POINTER_UP;
-		if (pdf_pass_event(ctx, pdf, (pdf_page*)page, &event))
+		if (pdf_pass_event(ctx, pdf, (pdf_page*)which_page, &event))
 		{
-			pdf_update_page(ctx, (pdf_page*)page);
+			pdf_update_page(ctx, (pdf_page*)which_page);
 			render_page();
 			ui_needs_update = 1;
 		}
