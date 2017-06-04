@@ -7,7 +7,9 @@
 #include <stdio.h>
 
 #ifndef _WIN32
+#include <sys/types.h>
 #include <unistd.h> /* for fork and exec */
+#include <sys/wait.h>
 #endif
 
 enum
@@ -429,6 +431,86 @@ static void pop_future(void)
 	push_history();
 }
 
+#ifndef _WIN32
+/*
+  Set the X11 primary selection (as opposed to clipboard selection).
+  The GLFW library does not seem to support the primary selection (issue
+  here: https://github.com/glfw/glfw/issues/894). So do a work-around by
+  calling the xsel command.
+  If xsel is not available, the primary selection will not be set (but
+  the clipboard selection still will).
+*/
+static void do_set_primary_selection(const char *data)
+{
+	int pipefd[2];
+	int err;
+	pid_t pid;
+	int child_status;
+	size_t sofar, total;
+
+	err = pipe(pipefd);
+	if (err)
+	{
+		fz_warn(ctx, "Cannot set primary selection: pipe() failed: %s", strerror(errno));
+		return;
+	}
+	pid = fork();
+	if (pid == -1)
+	{
+		fz_warn(ctx, "Cannot set primary selection: fork() failed: %s", strerror(errno));
+		close(pipefd[1]);
+		close(pipefd[0]);
+		return;
+	}
+	if (pid == 0)
+	{
+		/* Child. */
+		if (pipefd[0] != 0)
+		{
+			dup2(pipefd[0], 0);
+			close(pipefd[0]);
+		}
+		close(pipefd[1]);
+		execl("/usr/bin/xsel", "-i", "-p", (char *)0);
+		_exit(127);
+		return;				/* NotReached */
+	}
+	/* Parent */
+	close(pipefd[0]);
+	total = strlen(data);
+	sofar = 0;
+	while (sofar < total)
+	{
+		ssize_t res = write(pipefd[1], data, total - sofar);
+		if (res < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+			continue;
+		if (res <= 0)
+			break;
+		sofar += res;
+		data += res;
+	}
+	close(pipefd[1]);
+	if (sofar < total)
+		fz_warn(ctx, "Cannot set primary selection: write to pipe failed.");
+
+	for (;;)
+	{
+		pid_t pid2 = waitpid(pid, &child_status, 0);
+		if (pid2 < 0 && errno == EINTR)
+			continue;
+		if (pid2 < 0)
+		{
+			fz_warn(ctx, "Cannot set primary selection: waitpid() failed: %s",
+				strerror(errno));
+			break;
+		}
+		if (!(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0))
+			fz_warn(ctx, "Cannot set primary selection: running xsel failed.");
+		break;
+	}
+}
+#endif
+
 static void do_copy_region(fz_rect *screen_sel, int xofs, int yofs)
 {
 	fz_buffer *buf;
@@ -456,6 +538,7 @@ static void do_copy_region(fz_rect *screen_sel, int xofs, int yofs)
 	buf = fz_new_buffer_from_page(ctx, which_page, &page_sel, 1, NULL);
 #else
 	buf = fz_new_buffer_from_page(ctx, which_page, &page_sel, 0, NULL);
+	do_set_primary_selection(fz_string_from_buffer(ctx, buf));
 #endif
 	glfwSetClipboardString(window, fz_string_from_buffer(ctx, buf));
 	fz_drop_buffer(ctx, buf);
