@@ -1082,6 +1082,14 @@ static void do_app(void)
 	if (ui.down || ui.middle || ui.right || ui.key)
 		showinfo = showhelp = 0;
 
+	if (search_active)
+	{
+		if (ui.key == KEY_ESCAPE)
+			search_active = 0;
+		/* ignore keys during search */
+		return;
+	}
+
 	if (!ui.focus && ui.key)
 	{
 		switch (ui.key)
@@ -1478,9 +1486,6 @@ static void run_main_loop(void)
 	{
 		float start_time = glfwGetTime();
 
-		if (ui.key == KEY_ESCAPE)
-			search_active = 0;
-
 		/* ignore events during search */
 		ui.key = ui.mod = 0;
 		ui.down = ui.middle = ui.right = 0;
@@ -1494,8 +1499,6 @@ static void run_main_loop(void)
 		if (search_active)
 			ui_needs_update = 1;
 	}
-
-	do_app();
 
 	canvas_w = window_w - canvas_x;
 	canvas_h = window_h - canvas_y;
@@ -1515,11 +1518,13 @@ static void run_main_loop(void)
 		int state = ui_input(canvas_x, 0, canvas_x + canvas_w, ui.lineheight+4, &search_input);
 		if (state == -1)
 		{
+			/* Search request aborted. */
 			ui.focus = NULL;
 			showsearch = 0;
 		}
 		else if (state == 1)
 		{
+			/* Search request initiated. */
 			ui.focus = NULL;
 			showsearch = 0;
 			search_page = -1;
@@ -1556,7 +1561,11 @@ static void on_char(GLFWwindow *window, unsigned int key, int mod)
 {
 	ui.key = key;
 	ui.mod = mod;
-	run_main_loop();
+	/* Avoid redrawing for every navigation key, to not lag behind a large event queue */
+	if (!showsearch)
+		do_app();
+	else
+		run_main_loop();
 	ui.key = ui.mod = 0;
 }
 
@@ -1606,7 +1615,11 @@ static void on_key(GLFWwindow *window, int special, int scan, int action, int mo
 		if (ui.key)
 		{
 			ui.mod = mod;
-			run_main_loop();
+			/* Avoid redrawing for every navigation key, to not lag behind a large event queue */
+			if (!showsearch)
+				do_app();
+			else
+				run_main_loop();
 			ui.key = ui.mod = 0;
 		}
 	}
