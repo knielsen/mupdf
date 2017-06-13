@@ -27,6 +27,9 @@ enum
 	DEFAULT_UI_FONTSIZE = 15,
 	DEFAULT_UI_BASELINE = 14,
 	DEFAULT_UI_LINEHEIGHT = 18,
+
+	/* Spacing between the two dual-pages, in pixels */
+	DUALPAGE_SPACING = 2,
 };
 
 #define DEFAULT_WINDOW_W (612 * currentzoom / 72)
@@ -238,7 +241,8 @@ static void update_title(void)
 	glfwSetWindowTitle(window, buf);
 }
 
-void texture_from_pixmap(struct texture *tex, fz_pixmap *pix, int offset, fz_pixmap *pix2)
+void texture_from_pixmap(struct texture *tex, fz_pixmap *pix, int offset,
+			 fz_pixmap *pix2, int dualpage_spacing)
 {
 	if (!tex->id)
 		glGenTextures(1, &tex->id);
@@ -252,7 +256,7 @@ void texture_from_pixmap(struct texture *tex, fz_pixmap *pix, int offset, fz_pix
 	tex->h = pix->h;
 	if (pix2)
 	{
-	  tex->w += pix2->w;
+	  tex->w += dualpage_spacing + pix2->w;
 	  if (tex->h < pix2->h)
 	    tex->h = pix2->h;
 	}
@@ -269,7 +273,7 @@ void texture_from_pixmap(struct texture *tex, fz_pixmap *pix, int offset, fz_pix
 			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, pix->w, pix->h,
 					pix->n == 4 ? GL_RGBA : GL_RGB,
 					GL_UNSIGNED_BYTE, pix->samples);
-			glTexSubImage2D(GL_TEXTURE_2D, 0, pix->w, 0, pix2->w, pix2->h,
+			glTexSubImage2D(GL_TEXTURE_2D, 0, pix->w + dualpage_spacing, 0, pix2->w, pix2->h,
 					pix2->n == 4 ? GL_RGBA : GL_RGB,
 					GL_UNSIGNED_BYTE, pix2->samples);
 		}
@@ -310,7 +314,7 @@ static int render_annotations(fz_page *cur_page, int page_offset)
 	for (annot = fz_first_annot(ctx, cur_page); annot; annot = fz_next_annot(ctx, annot))
 	{
 		pix = fz_new_pixmap_from_annot(ctx, annot, &page_ctm, fz_device_rgb(ctx), 1);
-		texture_from_pixmap(&annot_tex[annot_count++], pix, page_offset, NULL);
+		texture_from_pixmap(&annot_tex[annot_count++], pix, page_offset, NULL, 0);
 		fz_drop_pixmap(ctx, pix);
 		if (annot_count >= nelem(annot_tex))
 		{
@@ -348,17 +352,17 @@ void render_page(void)
 		links2 = fz_load_links(ctx, page2);
 
 	pix = fz_new_pixmap_from_page_contents(ctx, page, &page_ctm, fz_device_rgb(ctx), 0);
-	dualpage_xoffset = pix->w;
+	dualpage_xoffset = pix->w + DUALPAGE_SPACING;
 	if (page2)
 	{
 		pix2 = fz_new_pixmap_from_page_contents(ctx, page2, &page_ctm,
 							fz_device_rgb(ctx), 0);
-		texture_from_pixmap(&page_tex, pix, 0, pix2);
+		texture_from_pixmap(&page_tex, pix, 0, pix2, DUALPAGE_SPACING);
 		fz_drop_pixmap(ctx, pix2);
 	}
 	else
 	{
-		texture_from_pixmap(&page_tex, pix, 0, NULL);
+		texture_from_pixmap(&page_tex, pix, 0, NULL, 0);
 	}
 	fz_drop_pixmap(ctx, pix);
 
