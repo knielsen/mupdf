@@ -1105,7 +1105,7 @@ static void do_app(void)
 	{
 		switch (ui.key)
 		{
-		case KEY_F1: showhelp = !showhelp; break;
+		case KEY_F1: case KEY_CTL_H: showhelp = !showhelp; break;
 		case 'o': toggle_outline(); break;
 		case 'L': showlinks = !showlinks; break;
 		case 'i': showinfo = !showinfo; break;
@@ -1316,7 +1316,7 @@ static void do_help(void)
 	glColor4f(0, 0, 0, 1);
 	y = do_help_line(x, y, "MuPDF", FZ_VERSION);
 	y += ui.lineheight;
-	y = do_help_line(x, y, "F1", "show this message");
+	y = do_help_line(x, y, "F1 or CTRL-h", "show this message");
 	y = do_help_line(x, y, "i", "show document information");
 	y = do_help_line(x, y, "o", "show/hide outline");
 	y = do_help_line(x, y, "L", "show/hide links");
