@@ -1071,6 +1071,36 @@ static void smart_move_forward(void)
 	}
 }
 
+static void next_search_backwards(void)
+{
+	search_dir = -1;
+	if (search_hit_page == currentpage)
+		search_page = currentpage + search_dir;
+	else
+		search_page = currentpage;
+	if (search_page >= 0 && search_page < fz_count_pages(ctx, doc))
+	{
+		search_hit_page = -1;
+		if (search_needle)
+			search_active = 1;
+	}
+}
+
+static void next_search_forwards(void)
+{
+	search_dir = 1;
+	if (search_hit_page == currentpage)
+		search_page = currentpage + (showdualpage ? 2 : 1) * search_dir;
+	else
+		search_page = currentpage;
+	if (search_page >= 0 && search_page < fz_count_pages(ctx, doc))
+	{
+		search_hit_page = -1;
+		if (search_needle)
+			search_active = 1;
+	}
+}
+
 static void quit(void)
 {
 	glfwSetWindowShouldClose(window, 1);
@@ -1169,30 +1199,16 @@ static void do_app(void)
 			search_input.q = search_input.end;
 			break;
 		case 'N':
-			search_dir = -1;
-			if (search_hit_page == currentpage)
-				search_page = currentpage + search_dir;
-			else
-				search_page = currentpage;
-			if (search_page >= 0 && search_page < fz_count_pages(ctx, doc))
-			{
-				search_hit_page = -1;
-				if (search_needle)
-					search_active = 1;
-			}
+			next_search_backwards();
 			break;
 		case 'n':
-			search_dir = 1;
-			if (search_hit_page == currentpage)
-				search_page = currentpage + (showdualpage ? 2 : 1) * search_dir;
+			next_search_forwards();
+			break;
+		case KEY_CTL_G:
+			if (ui.mod == GLFW_MOD_SHIFT + GLFW_MOD_CONTROL)
+				next_search_backwards();
 			else
-				search_page = currentpage;
-			if (search_page >= 0 && search_page < fz_count_pages(ctx, doc))
-			{
-				search_hit_page = -1;
-				if (search_needle)
-					search_active = 1;
-			}
+				next_search_forwards();
 			break;
 		}
 
@@ -1282,7 +1298,7 @@ static void do_info(void)
 static int do_help_line(int x, int y, char *label, char *text)
 {
 	ui_draw_string(ctx, x, y, label);
-	ui_draw_string(ctx, x+100, y, text);
+	ui_draw_string(ctx, x+125, y, text);
 	return y + ui.lineheight;
 }
 
@@ -1309,7 +1325,7 @@ static void do_help(void)
 	glColor4f(0, 0, 0, 1);
 	y = do_help_line(x, y, "MuPDF", FZ_VERSION);
 	y += ui.lineheight;
-	y = do_help_line(x, y, "F1 or CTRL-h", "show this message");
+	y = do_help_line(x, y, "F1 or ^h", "show this message");
 	y = do_help_line(x, y, "i", "show document information");
 	y = do_help_line(x, y, "o", "show/hide outline");
 	y = do_help_line(x, y, "L", "show/hide links");
@@ -1343,7 +1359,7 @@ static void do_help(void)
 	y = do_help_line(x, y, "N t", "go to bookmark N");
 	y += ui.lineheight;
 	y = do_help_line(x, y, "/ or ?", "search for text");
-	y = do_help_line(x, y, "n or N", "repeat search");
+	y = do_help_line(x, y, "n or N, ^g or ^G", "repeat search");
 }
 
 static void do_canvas(void)
@@ -1489,12 +1505,16 @@ static void run_main_loop(void)
 	if (search_active)
 	{
 		float start_time = glfwGetTime();
+		float max_seconds = (showsearch ? 0.1f : 0.2f);
 
-		/* ignore events during search */
-		ui.key = ui.mod = 0;
-		ui.down = ui.middle = ui.right = 0;
+		if (!showsearch)
+		{
+			/* ignore events during search */
+			ui.key = ui.mod = 0;
+			ui.down = ui.middle = ui.right = 0;
+		}
 
-		while (search_active && glfwGetTime() < start_time + 0.2f)
+		while (search_active && glfwGetTime() < start_time + max_seconds)
 		{
 			search_forward();
 		}
@@ -1544,10 +1564,30 @@ static void run_main_loop(void)
 				search_page = currentpage;
 			}
 		}
-		ui_needs_update = 1;
+		else if (search_input.end > search_input.text &&
+			 (!search_needle || strcmp(search_input.text, search_needle) || ui.key == KEY_CTL_G))
+		{
+			if (search_needle)
+				fz_free(ctx, search_needle);
+			search_needle = fz_strdup(ctx, search_input.text);
+			search_active = 1;
+			search_page = currentpage;
+			if (ui.key == KEY_CTL_G)
+			{
+				search_dir = (ui.mod == GLFW_MOD_CONTROL + GLFW_MOD_SHIFT ? -1 : 1);
+				if (ui.mod == GLFW_MOD_CONTROL + GLFW_MOD_SHIFT && search_page > 0)
+					search_page -= 1;
+				else if (showdualpage && search_page + 2 < fz_count_pages(ctx, doc))
+					search_page += 2;
+				else if (search_page + 1 < fz_count_pages(ctx, doc))
+					search_page += 1;
+			}
+		}
+		if (ui.key)
+			ui_needs_update = 1;
 	}
 
-	if (search_active)
+	if (search_active && !showsearch)
 	{
 		char buf[256];
 		sprintf(buf, "Searching page %d of %d.", search_page + 1, fz_count_pages(ctx, doc));
