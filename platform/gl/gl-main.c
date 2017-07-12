@@ -114,6 +114,8 @@ void ui_draw_image(struct texture *tex, float x, float y)
 	glEnable(GL_BLEND);
 	glBindTexture(GL_TEXTURE_2D, tex->id);
 	glEnable(GL_TEXTURE_2D);
+	if (color_scheme[colormode].shader_program)
+		glUseProgram(*color_scheme[colormode].shader_program);
 	glBegin(GL_TRIANGLE_STRIP);
 	{
 		glColor4f(1, 1, 1, 1);
@@ -129,6 +131,8 @@ void ui_draw_image(struct texture *tex, float x, float y)
 	glEnd();
 	glDisable(GL_TEXTURE_2D);
 	glDisable(GL_BLEND);
+	if (color_scheme[colormode].shader_program)
+		glUseProgram(0);
 }
 
 static const int zoom_list[] = { 18, 24, 36, 54, 72, 96, 120, 144, 180, 216, 288 };
@@ -544,9 +548,9 @@ static void do_copy_region(fz_rect *screen_sel, int xofs, int yofs)
 
 static void ui_label_draw(int x0, int y0, int x1, int y1, const char *text)
 {
-	glColor4f(1, 1, 1, 1);
+	glColor4f(COLOR_SCHEME(label_background));
 	glRectf(x0, y0, x1, y1);
-	glColor4f(0, 0, 0, 1);
+	glColor4f(COLOR_SCHEME(label_text));
 	ui_draw_string(ctx, x0 + 2, y0 + 2 + ui.baseline, text);
 }
 
@@ -565,7 +569,7 @@ static void ui_scrollbar(int x0, int y0, int x1, int y1, int *value, int page_si
 	if (max <= 0)
 	{
 		*value = 0;
-		glColor4f(0.6f, 0.6f, 0.6f, 1.0f);
+		glColor4f(COLOR_SCHEME(scrollbar_background));
 		glRectf(x0, y0, x1, y1);
 		return;
 	}
@@ -608,9 +612,9 @@ static void ui_scrollbar(int x0, int y0, int x1, int y1, int *value, int page_si
 
 	top = (float) *value * avail_h / max;
 
-	glColor4f(0.6f, 0.6f, 0.6f, 1.0f);
+	glColor4f(COLOR_SCHEME(scrollbar_background));
 	glRectf(x0, y0, x1, y1);
-	glColor4f(0.8f, 0.8f, 0.8f, 1.0f);
+	glColor4f(COLOR_SCHEME(scrollbar_thumb));
 	glRectf(x0, top, x1, top + thumb_h);
 }
 
@@ -656,12 +660,12 @@ static int do_outline_imp(fz_outline *node, int end, int x0, int x1, int x, int 
 			}
 			if (currentpage == p || (currentpage > p && currentpage < n))
 			{
-				glColor4f(0.9f, 0.9f, 0.9f, 1.0f);
+				glColor4f(COLOR_SCHEME(outline_current));
 				glRectf(x0, y + h, x1, y + h + ui.lineheight);
 			}
 		}
 
-		glColor4f(0, 0, 0, 1);
+		glColor4f(COLOR_SCHEME(outline_text));
 		ui_draw_string(ctx, x, y + h + ui.baseline, node->title);
 		h += ui.lineheight;
 		if (node->down)
@@ -708,7 +712,7 @@ static void do_outline(fz_outline *node, int outline_w)
 	glScissor(0, 0, outline_w, outline_h);
 	glEnable(GL_SCISSOR_TEST);
 
-	glColor4f(1, 1, 1, 1);
+	glColor4f(COLOR_SCHEME(outline_background));
 	glRectf(0, 0, outline_w, outline_h);
 
 	do_outline_imp(outline, fz_count_pages(ctx, doc), 0, outline_w, 10, -outline_scroll_y);
@@ -833,7 +837,7 @@ static void do_search_hits(int xofs, int yofs)
 
 		fz_transform_rect(&r, &page_ctm);
 
-		glColor4f(1, 0, 0, 0.4f);
+		glColor4f(COLOR_SCHEME(search_highlight));
 		glRectf(xofs + r.x0 + xoffset, yofs + r.y0, xofs + r.x1 + xoffset, yofs + r.y1);
 	}
 
@@ -912,6 +916,15 @@ static void toggle_fullscreen(void)
 		glfwSetWindowMonitor(window, NULL, win_x, win_y, win_w, win_h, win_rr);
 		isfullscreen = 0;
 	}
+}
+
+static void set_colormode(int mode)
+{
+	/* Initialise shaders only on first use of color mode. If shaders
+	 * are not available in, color mode can not be used. */
+	if (!init_shaders())
+		return;
+	colormode = fz_maxi(mode, 0) % COLMODE_COUNT;
 }
 
 static void shrinkwrap(void)
@@ -1160,6 +1173,7 @@ static void do_app(void)
 		case 'G': jump_to_page(fz_count_pages(ctx, doc) - 1); break;
 		case 's': set_dualpage(0); break;
 		case 'd': set_dualpage(1); break;
+		case 'y': set_colormode(number ? number - 1 : colormode + 1); break;
 
 		case 'm':
 			if (number == 0)
@@ -1252,7 +1266,7 @@ static void do_info(void)
 
 	glBegin(GL_TRIANGLE_STRIP);
 	{
-		glColor4f(0.9f, 0.9f, 0.9f, 1.0f);
+		glColor4f(COLOR_SCHEME(info_background));
 		glVertex2f(x, y);
 		glVertex2f(x, y + h);
 		glVertex2f(x + w, y);
@@ -1263,7 +1277,7 @@ static void do_info(void)
 	x += ui.lineheight;
 	y += ui.lineheight + ui.baseline;
 
-	glColor4f(0, 0, 0, 1);
+	glColor4f(COLOR_SCHEME(info_text));
 	if (fz_lookup_metadata(ctx, doc, FZ_META_INFO_TITLE, buf, sizeof buf) > 0)
 		y = do_info_line(x, y, "Title", buf);
 	if (fz_lookup_metadata(ctx, doc, FZ_META_INFO_AUTHOR, buf, sizeof buf) > 0)
@@ -1307,11 +1321,11 @@ static void do_help(void)
 	int x = canvas_x + 4 * ui.lineheight;
 	int y = canvas_y + 4 * ui.lineheight;
 	int w = canvas_w - 8 * ui.lineheight;
-	int h = 39 * ui.lineheight;
+	int h = 41 * ui.lineheight;
 
 	glBegin(GL_TRIANGLE_STRIP);
 	{
-		glColor4f(0.9f, 0.9f, 0.9f, 1.0f);
+		glColor4f(COLOR_SCHEME(help_background));
 		glVertex2f(x, y);
 		glVertex2f(x, y + h);
 		glVertex2f(x + w, y);
@@ -1322,7 +1336,7 @@ static void do_help(void)
 	x += ui.lineheight;
 	y += ui.lineheight + ui.baseline;
 
-	glColor4f(0, 0, 0, 1);
+	glColor4f(COLOR_SCHEME(help_text));
 	y = do_help_line(x, y, "MuPDF", FZ_VERSION);
 	y += ui.lineheight;
 	y = do_help_line(x, y, "F1 or ^h", "show this message");
@@ -1338,6 +1352,8 @@ static void do_help(void)
 	y = do_help_line(x, y, "Z", "fit to page");
 	y = do_help_line(x, y, "d", "dual-page mode");
 	y = do_help_line(x, y, "s", "single-page mode");
+	y = do_help_line(x, y, "y", "cycle through color schemes");
+	y = do_help_line(x, y, "N y", "Select color scheme N");
 	y = do_help_line(x, y, "z", "reset zoom");
 	y = do_help_line(x, y, "N z", "set zoom to N");
 	y = do_help_line(x, y, "+ or -", "zoom in or out");
@@ -1490,7 +1506,7 @@ static void search_forward(void)
 static void run_main_loop(void)
 {
 	glViewport(0, 0, window_w, window_h);
-	glClearColor(0.3f, 0.3f, 0.3f, 1.0f);
+	glClearColor(COLOR_SCHEME(canvas_background));
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	glMatrixMode(GL_PROJECTION);
@@ -1730,6 +1746,7 @@ static void usage(const char *argv0)
 	fprintf(stderr, "\t-U -\tuser style sheet for EPUB layout\n");
 	fprintf(stderr, "\t-X\tdisable document styles for EPUB layout\n");
 	fprintf(stderr, "\t-d\tenable dual-page mode\n");
+	fprintf(stderr, "\t-y -\tcolor scheme\n\t\t    (1: normal, 2: yellow monochrome, 3: yellow multi-color\n");
 	exit(1);
 }
 
@@ -1741,8 +1758,9 @@ int main(int argc, char **argv)
 {
 	const GLFWvidmode *video_mode;
 	int c;
+	int user_colormode = 0;
 
-	while ((c = fz_getopt(argc, argv, "p:r:W:H:S:U:Xd")) != -1)
+	while ((c = fz_getopt(argc, argv, "p:r:W:H:S:U:Xdy:")) != -1)
 	{
 		switch (c)
 		{
@@ -1755,6 +1773,7 @@ int main(int argc, char **argv)
 		case 'U': layout_css = fz_optarg; break;
 		case 'X': layout_use_doc_css = 0; break;
 		case 'd': showdualpage = 1; break;
+		case 'y': user_colormode = fz_atoi(fz_optarg); break;
 		}
 	}
 
@@ -1831,6 +1850,9 @@ int main(int argc, char **argv)
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
 
+	if (user_colormode)
+		set_colormode(user_colormode - 1);
+
 	ui.fontsize = DEFAULT_UI_FONTSIZE;
 	ui.baseline = DEFAULT_UI_BASELINE;
 	ui.lineheight = DEFAULT_UI_LINEHEIGHT;
@@ -1875,6 +1897,7 @@ int main(int argc, char **argv)
 	fz_drop_document(ctx, doc);
 	fz_drop_context(ctx);
 
+	finish_shaders();
 	glfwTerminate();
 
 	return 0;
