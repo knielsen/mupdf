@@ -717,7 +717,7 @@ GLFW_SRC := \
 $(GLFW_OUT)/%.o: $(GLFW_DIR)/src/%.c | $(GLFW_OUT)
 	$(CC_CMD) -D_GLFW_X11
 $(GLFW_LIB): $(addprefix $(GLFW_OUT)/, $(GLFW_SRC:%.c=%.o))
-GLFW_LIBS := -lGL -ldl -lX11 -lXcursor -lXrandr -lXinerama -lpthread
+GLFW_LIBS := -lGL -lGLEW -ldl -lX11 -lXcursor -lXrandr -lXinerama -lpthread
 
 endif
 
