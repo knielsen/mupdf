@@ -312,10 +312,10 @@ int ui_input(int x0, int y0, int x1, int y1, struct input *input)
 	else
 		state = 0;
 
-	glColor4f(0, 0, 0, 1);
+	glColor4f(COLOR_SCHEME(input_text));
 	glRectf(x0, y0, x1, y1);
 
-	glColor4f(1, 1, 1, 1);
+	glColor4f(COLOR_SCHEME(input_background));
 	glRectf(x0+1, y0+1, x1-1, y1-1);
 
 	p = input->p < input->q ? input->p : input->q;
@@ -326,11 +326,11 @@ int ui_input(int x0, int y0, int x1, int y1, struct input *input)
 
 	if (ui.focus)
 	{
-		glColor4f(0.6f, 0.6f, 1.0f, 1.0f);
+		glColor4f(COLOR_SCHEME(input_marked));
 		glRectf(px, y0 + 2, qx+1, y1 - 2);
 	}
 
-	glColor4f(0, 0, 0, 1);
+	glColor4f(COLOR_SCHEME(input_text));
 	draw_string_part(x0 + 2, y0 + 2, input->text, input->end);
 
 	return state;

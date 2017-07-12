@@ -7,6 +7,7 @@ int win_open_file(char *buf, int len);
 #include "mupdf/fitz.h"
 #include "mupdf/ucdn.h"
 
+#include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
 extern fz_context *ctx;
@@ -93,3 +94,44 @@ struct input
 };
 
 int ui_input(int x0, int y0, int x1, int y1, struct input *input);
+
+/* Definitions for different color modes */
+enum
+{
+	COLMODE_NORMAL,
+	COLMODE_YELLOW_MONOCHROME,
+	COLMODE_YELLOW_MULTI,
+	COLMODE_COUNT
+};
+struct colormode_rgba { float r, g, b, a; };
+struct color_scheme
+{
+	GLuint *shader_program;			/* NULL for no shader */
+	struct colormode_rgba canvas_background;
+	struct colormode_rgba label_background;
+	struct colormode_rgba label_text;
+	struct colormode_rgba scrollbar_background;
+	struct colormode_rgba scrollbar_thumb;
+	struct colormode_rgba outline_current;
+	struct colormode_rgba outline_background;
+	struct colormode_rgba outline_text;
+	struct colormode_rgba search_highlight;
+	struct colormode_rgba input_background;
+	struct colormode_rgba input_text;
+	struct colormode_rgba input_marked;
+	struct colormode_rgba info_background;
+	struct colormode_rgba info_text;
+	struct colormode_rgba help_background;
+	struct colormode_rgba help_text;
+};
+#define COLOR_SCHEME(element) \
+	color_scheme[colormode].element.r, \
+	color_scheme[colormode].element.g, \
+	color_scheme[colormode].element.b, \
+	color_scheme[colormode].element.a
+
+extern int colormode;
+extern const struct color_scheme color_scheme[COLMODE_COUNT];
+
+int init_shaders(void);
+void finish_shaders(void);

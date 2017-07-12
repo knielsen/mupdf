@@ -941,6 +941,10 @@
 			>
 		</File>
 		<File
+			RelativePath="..\gl\gl-colormode.c"
+			>
+		</File>
+		<File
 			RelativePath="..\gl\gl-main.c"
 			>
 		</File>
