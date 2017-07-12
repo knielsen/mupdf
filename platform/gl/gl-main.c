@@ -998,6 +998,10 @@ static void set_dualpage(int dual)
 	int is_shrinkwrap = (canvas_w == page_tex.w && canvas_h == page_tex.h);
 	showdualpage = dual;
 	render_page();
+
+	/* Clear search highlights when switching dual-page mode on or off. */
+	search_hit_page = -1;
+
 	if (is_shrinkwrap && !isfullscreen)
 		shrinkwrap();
 }
