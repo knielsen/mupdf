@@ -658,7 +658,8 @@ static int do_outline_imp(fz_outline *node, int end, int x0, int x1, int x, int 
 			{
 				n = node->next->page;
 			}
-			if (currentpage == p || (currentpage > p && currentpage < n))
+			if (currentpage == p || (currentpage > p && currentpage < n) ||
+			    (showdualpage && currentpage + 1 == p))
 			{
 				glColor4f(COLOR_SCHEME(outline_current));
 				glRectf(x0, y + h, x1, y + h + ui.lineheight);
