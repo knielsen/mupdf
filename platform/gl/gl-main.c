@@ -54,7 +54,7 @@ static void ui_begin(void)
 static void ui_end(void)
 {
 	if (!ui.down && !ui.middle && !ui.right)
-		ui.active = NULL;
+		ui.active = ui.active2 = NULL;
 	if (ui_needs_update)
 		glfwPostEmptyEvent();
 }
@@ -222,6 +222,7 @@ static int search_hit_count2 = 0;
 static int search_hit_index = 0;
 static int search_hit_index2 = 0;
 static fz_rect search_hit_bbox[5000];
+static fz_buffer *selection_buf = NULL;
 
 static unsigned int next_power_of_two(unsigned int n)
 {
@@ -780,6 +781,229 @@ static void do_links(fz_link *link, int xofs, int yofs)
 	}
 
 	glDisable(GL_BLEND);
+}
+
+enum
+{
+	LINE_KIND_SINGLE,
+	LINE_KIND_TOP,
+	LINE_KIND_INNER,
+	LINE_KIND_BOTTOM
+};
+
+static void select_region_line(fz_stext_line *l, fz_rect *coords, float xtop, float xbot,
+			       float xofs, float yofs, int line_kind)
+{
+	fz_stext_span *s;
+	int span_count = 0;
+
+	for (s = l->first_span; s; s = s->next)
+	{
+		int i;
+		int char_count = 0;
+		fz_rect marked;
+
+		for (i = 0; i < s->len; ++i)
+		{
+			fz_rect bbox;
+
+			fz_stext_char_bbox(ctx, &bbox, s, i);
+			if (bbox.y0 <= coords->y1 && bbox.y1 >= coords->y0 &&
+			    ((line_kind == LINE_KIND_SINGLE &&
+			      bbox.x0 <= coords->x1 && bbox.x1 >= coords->x0) ||
+			     (line_kind == LINE_KIND_TOP && bbox.x1 >= xtop) ||
+			     (line_kind == LINE_KIND_INNER) ||
+			     (line_kind == LINE_KIND_BOTTOM && bbox.x0 <= xbot)))
+			{
+				if (char_count == 0)
+				{
+					marked = bbox;
+					if (selection_buf && span_count > 0)
+						fz_append_byte(ctx, selection_buf, ' ');
+				}
+				else
+				{
+					if (bbox.x0 < marked.x0)
+						marked.x0 = bbox.x0;
+					if (bbox.x1 > marked.x1)
+						marked.x1 = bbox.x1;
+					if (bbox.y0 < marked.y0)
+						marked.y0 = bbox.y0;
+					if (bbox.y1 > marked.y1)
+						marked.y1 = bbox.y1;
+				}
+				if (selection_buf)
+				{
+					int c = s->text[i].c;
+					if (c < 32)
+						c = 0xFFFD;
+					fz_append_rune(ctx, selection_buf, c);
+				}
+				++char_count;
+			}
+		}
+		if (char_count)
+		{
+			++span_count;
+			fz_transform_rect(&marked, &page_ctm);
+			glRectf(marked.x0 + xofs, marked.y0 + yofs, marked.x1 + xofs, marked.y1 + yofs);
+		}
+	}
+
+	if (selection_buf &&
+	    (line_kind == LINE_KIND_TOP || line_kind == LINE_KIND_INNER || coords->x1 > l->bbox.x1))
+	{
+#ifdef _WIN32
+		fz_append_byte(ctx, selection_buf, '\r');
+#endif
+		fz_append_byte(ctx, selection_buf, '\n');
+	}
+}
+
+static void determine_select_region(int xofs, int yofs, fz_rect coords)
+{
+	fz_page *which_page;
+	fz_stext_sheet *sheet;
+	fz_stext_page *text;
+	int bl;
+	int line_count = 0;
+	float xtop, xbot;
+	float tmp;
+	fz_stext_line *prev_l;
+
+	if (showdualpage && coords.x0 > dualpage_xoffset) {
+		which_page = page2;
+		coords.x0 -= dualpage_xoffset;
+		coords.x1 -= dualpage_xoffset;
+		xofs += dualpage_xoffset;
+	}
+	else
+	{
+		which_page = page;
+	}
+
+	/* Make the top selection point the first one */
+	if (coords.y0 > coords.y1)
+	{
+		tmp = coords.x0;
+		coords.x0 = coords.x1;
+		coords.x1 = tmp;
+		tmp = coords.y0;
+		coords.y0 = coords.y1;
+		coords.y1 = tmp;
+	}
+	if (coords.x0 <= coords.x1)
+	{
+		fz_transform_rect(&coords, &page_inv_ctm);
+		xtop = coords.x0;
+		xbot = coords.x1;
+	}
+	else
+	{
+		tmp = coords.x0;
+		coords.x0 = coords.x1;
+		coords.x1 = tmp;
+		fz_transform_rect(&coords, &page_inv_ctm);
+		xtop = coords.x1;
+		xbot = coords.x0;
+	}
+
+	sheet = fz_new_stext_sheet(ctx);
+	text = fz_new_stext_page_from_page(ctx, which_page, sheet, NULL);
+
+	glBlendFunc(GL_ONE_MINUS_DST_COLOR, GL_ZERO); /* invert destination color */
+	glEnable(GL_BLEND);
+	glColor4f(1, 1, 1, 1);
+
+	prev_l = NULL;
+	for (bl = 0; bl < text->len; ++bl)
+	{
+		fz_stext_block *block;
+		fz_stext_line *l;
+
+		if (text->blocks[bl].type != FZ_PAGE_BLOCK_TEXT)
+			continue;
+		block = text->blocks[bl].u.text;
+		if (block->bbox.y0 > coords.y1 || block->bbox.y1 < coords.y0)
+			continue;
+		for (l = block->lines; l < block->lines + block->len; ++l)
+		{
+			if (l->bbox.y0 > coords.y1 || l->bbox.y1 < coords.y0)
+				continue;
+
+			if (line_count > 0)
+			{
+				int line_kind = line_count > 1 ? LINE_KIND_INNER : LINE_KIND_TOP;
+				select_region_line(prev_l, &coords, xtop, xbot,
+						 xofs, yofs, line_kind);
+			}
+			prev_l = l;
+			++line_count;
+
+		}
+	}
+
+	if (prev_l)
+	{
+		int line_kind = line_count > 1 ? LINE_KIND_BOTTOM : LINE_KIND_SINGLE;
+		select_region_line(prev_l, &coords, xtop, xbot, xofs, yofs, line_kind);
+	}
+
+	glDisable(GL_BLEND);
+
+	fz_drop_stext_page(ctx, text);
+	fz_drop_stext_sheet(ctx, sheet);
+}
+
+static void do_char_selection(int x0, int y0, int x1, int y1)
+{
+	static fz_rect sel;
+
+	if (ui.x >= x0 && ui.x < x1 && ui.y >= y0 && ui.y < y1)
+	{
+		if (!ui.active2 && ui.down)
+		{
+			ui.active2 = &sel;
+			sel.x0 = sel.x1 = ui.x;
+			sel.y0 = sel.y1 = ui.y;
+		}
+	}
+
+	/* If mouse moves while left button is held, character copy is done.
+	 * Until then, left click will follow links. */
+	if (ui.active2 == &sel && ui.down)
+	{
+		int dx = ui.x - sel.x0;
+		int dy = ui.y - sel.y0;
+		if (dx*dx+dy*dy >= 4)
+			ui.active = &sel;
+	}
+
+	if (ui.active == &sel)
+	{
+		fz_rect coords;
+
+		sel.x1 = ui.x;
+		sel.y1 = ui.y;
+
+		coords.x0 = sel.x0 - x0;
+		coords.y0 = sel.y0 - y0;
+		coords.x1 = sel.x1 - x0;
+		coords.y1 = sel.y1 - y0;
+
+		if (!ui.down)
+			selection_buf = fz_new_buffer(ctx, 256);
+		determine_select_region(x0, y0, coords);
+
+		if (selection_buf)
+		{
+			const char *text = fz_string_from_buffer(ctx, selection_buf);
+			glfwSetClipboardString(window, text);
+			do_set_primary_selection(text);
+			fz_drop_buffer(ctx, selection_buf);
+			selection_buf = NULL;
+		}
+	}
 }
 
 static void do_page_selection(int x0, int y0, int x1, int y1)
@@ -1458,6 +1682,7 @@ static void do_canvas(void)
 		if (links2)
 			do_links(links2, x + dualpage_xoffset, y);
 		do_page_selection(x, y, x+page_tex.w, y+page_tex.h);
+		do_char_selection(x, y, x+page_tex.w, y+page_tex.h);
 		if (search_hit_page == currentpage &&
 		    (search_hit_count > 0 || search_hit_count2 > 0))
 			do_search_hits(x, y);
