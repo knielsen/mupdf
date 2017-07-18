@@ -60,7 +60,7 @@ struct ui
 	int scroll_x, scroll_y;
 	int key, mod;
 
-	void *hot, *active, *focus;
+	void *hot, *active, *active2, *focus;
 
 	int fontsize;
 	int baseline;
