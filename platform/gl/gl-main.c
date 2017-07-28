@@ -35,6 +35,8 @@ enum
 #define DEFAULT_WINDOW_W (612 * currentzoom / 72)
 #define DEFAULT_WINDOW_H (792 * currentzoom / 72)
 
+#define DOUBLE_CLICK_SECONDS 0.6
+
 struct ui ui;
 fz_context *ctx = NULL;
 GLFWwindow *window = NULL;
@@ -793,11 +795,76 @@ enum
 	LINE_KIND_BOTTOM
 };
 
+enum
+{
+	SELECT_MODE_CHAR, SELECT_MODE_WORD, SELECT_MODE_LINE
+};
+
+enum
+{
+	CHAR_NUM_LETTER, CHAR_SYMBOL, CHAR_SPACE
+};
+
+static int char_type(int c)
+{
+	/* TAB, LF, CR have control character category (Cc). */
+	if (c == 9 || c == 10 || c == 13)
+		return CHAR_SPACE;
+
+	switch (ucdn_get_general_category(c))
+	{
+	case UCDN_GENERAL_CATEGORY_LU:
+	case UCDN_GENERAL_CATEGORY_LL:
+	case UCDN_GENERAL_CATEGORY_LT:
+	case UCDN_GENERAL_CATEGORY_LM:
+	case UCDN_GENERAL_CATEGORY_LO:
+
+	case UCDN_GENERAL_CATEGORY_ND:
+	case UCDN_GENERAL_CATEGORY_NL:
+	case UCDN_GENERAL_CATEGORY_NO:
+
+	case UCDN_GENERAL_CATEGORY_PC:
+		return CHAR_NUM_LETTER;
+
+	case UCDN_GENERAL_CATEGORY_ZL:
+	case UCDN_GENERAL_CATEGORY_ZP:
+	case UCDN_GENERAL_CATEGORY_ZS:
+		return CHAR_SPACE;
+
+	case UCDN_GENERAL_CATEGORY_MN:
+	case UCDN_GENERAL_CATEGORY_MC:
+	case UCDN_GENERAL_CATEGORY_ME:
+
+	case UCDN_GENERAL_CATEGORY_PD:
+	case UCDN_GENERAL_CATEGORY_PS:
+	case UCDN_GENERAL_CATEGORY_PE:
+	case UCDN_GENERAL_CATEGORY_PI:
+	case UCDN_GENERAL_CATEGORY_PF:
+	case UCDN_GENERAL_CATEGORY_PO:
+
+	case UCDN_GENERAL_CATEGORY_SM:
+	case UCDN_GENERAL_CATEGORY_SC:
+	case UCDN_GENERAL_CATEGORY_SK:
+	case UCDN_GENERAL_CATEGORY_SO:
+
+	case UCDN_GENERAL_CATEGORY_CC:
+	case UCDN_GENERAL_CATEGORY_CF:
+	case UCDN_GENERAL_CATEGORY_CS:
+	case UCDN_GENERAL_CATEGORY_CO:
+	case UCDN_GENERAL_CATEGORY_CN:
+
+	default:
+		return CHAR_SYMBOL;
+	}
+}
+
 static void select_region_line(fz_stext_line *l, fz_rect *coords, float xtop, float xbot,
-			       float xofs, float yofs, int line_kind)
+			       float xofs, float yofs, int line_kind, int select_mode)
 {
 	fz_stext_span *s;
 	int span_count = 0;
+	if (select_mode == SELECT_MODE_LINE)
+		line_kind = LINE_KIND_INNER;
 
 	for (s = l->first_span; s; s = s->next)
 	{
@@ -807,15 +874,39 @@ static void select_region_line(fz_stext_line *l, fz_rect *coords, float xtop, fl
 
 		for (i = 0; i < s->len; ++i)
 		{
-			fz_rect bbox;
+			fz_rect bbox, cbox;
+			int word_start, word_end;
 
+			word_start = i;
 			fz_stext_char_bbox(ctx, &bbox, s, i);
-			if (bbox.y0 <= coords->y1 && bbox.y1 >= coords->y0 &&
-			    ((line_kind == LINE_KIND_SINGLE &&
-			      bbox.x0 <= coords->x1 && bbox.x1 >= coords->x0) ||
-			     (line_kind == LINE_KIND_TOP && bbox.x1 >= xtop) ||
-			     (line_kind == LINE_KIND_INNER) ||
-			     (line_kind == LINE_KIND_BOTTOM && bbox.x0 <= xbot)))
+			if (select_mode == SELECT_MODE_WORD)
+			{
+				int c_type = char_type(s->text[i].c);
+				for (;;)
+				{
+					if (i + 1 >= s->len)
+						break;
+					if (char_type(s->text[i+1].c) != c_type)
+						break;
+					++i;
+					fz_stext_char_bbox(ctx, &cbox, s, i);
+					if (cbox.x0 < bbox.x0)
+						bbox.x0 = cbox.x0;
+					if (cbox.y0 < bbox.y0)
+						bbox.y0 = cbox.y0;
+					if (cbox.x1 > bbox.x1)
+						bbox.x1 = cbox.x1;
+					if (cbox.y1 > bbox.y1)
+						bbox.y1 = cbox.y1;
+				}
+			}
+			word_end = i;
+
+			if ((line_kind == LINE_KIND_SINGLE &&
+			     bbox.x0 <= coords->x1 && bbox.x1 >= coords->x0) ||
+			    (line_kind == LINE_KIND_TOP && bbox.x1 >= xtop) ||
+			    (line_kind == LINE_KIND_INNER) ||
+			    (line_kind == LINE_KIND_BOTTOM && bbox.x0 <= xbot))
 			{
 				if (char_count == 0)
 				{
@@ -836,10 +927,14 @@ static void select_region_line(fz_stext_line *l, fz_rect *coords, float xtop, fl
 				}
 				if (selection_buf)
 				{
-					int c = s->text[i].c;
-					if (c < 32)
-						c = 0xFFFD;
-					fz_append_rune(ctx, selection_buf, c);
+					int j;
+					for (j = word_start; j <= word_end; ++j)
+					{
+						int c = s->text[j].c;
+						if (c < 32)
+							c = 0xFFFD;
+						fz_append_rune(ctx, selection_buf, c);
+					}
 				}
 				++char_count;
 			}
@@ -862,7 +957,7 @@ static void select_region_line(fz_stext_line *l, fz_rect *coords, float xtop, fl
 	}
 }
 
-static void determine_select_region(int xofs, int yofs, fz_rect coords)
+static void determine_select_region(int xofs, int yofs, fz_rect coords, int select_mode)
 {
 	fz_page *which_page;
 	fz_stext_sheet *sheet;
@@ -932,12 +1027,15 @@ static void determine_select_region(int xofs, int yofs, fz_rect coords)
 		{
 			if (l->bbox.y0 > coords.y1 || l->bbox.y1 < coords.y0)
 				continue;
+			if ((l->bbox.y0 <= coords.y0 && l->bbox.y1 >= coords.y1) &&
+			    (l->bbox.x0 > coords.x1 || l->bbox.x1 < coords.x0))
+				continue;
 
 			if (line_count > 0)
 			{
 				int line_kind = line_count > 1 ? LINE_KIND_INNER : LINE_KIND_TOP;
 				select_region_line(prev_l, &coords, xtop, xbot,
-						 xofs, yofs, line_kind);
+						   xofs, yofs, line_kind, select_mode);
 			}
 			prev_l = l;
 			++line_count;
@@ -948,7 +1046,7 @@ static void determine_select_region(int xofs, int yofs, fz_rect coords)
 	if (prev_l)
 	{
 		int line_kind = line_count > 1 ? LINE_KIND_BOTTOM : LINE_KIND_SINGLE;
-		select_region_line(prev_l, &coords, xtop, xbot, xofs, yofs, line_kind);
+		select_region_line(prev_l, &coords, xtop, xbot, xofs, yofs, line_kind, select_mode);
 	}
 
 	glDisable(GL_BLEND);
@@ -977,13 +1075,14 @@ static void do_char_selection(int x0, int y0, int x1, int y1)
 	{
 		int dx = ui.x - sel.x0;
 		int dy = ui.y - sel.y0;
-		if (dx*dx+dy*dy >= 4)
+		if (ui.down_count > 1 || dx*dx+dy*dy >= 4)
 			ui.active = &sel;
 	}
 
 	if (ui.active == &sel)
 	{
 		fz_rect coords;
+		int mode;
 
 		sel.x1 = ui.x;
 		sel.y1 = ui.y;
@@ -995,7 +1094,13 @@ static void do_char_selection(int x0, int y0, int x1, int y1)
 
 		if (!ui.down)
 			selection_buf = fz_new_buffer(ctx, 256);
-		determine_select_region(x0, y0, coords);
+		if (ui.down_count == 1)
+			mode = SELECT_MODE_CHAR;
+		else if (ui.down_count == 2)
+			mode = SELECT_MODE_WORD;
+		else
+			mode = SELECT_MODE_LINE;
+		determine_select_region(x0, y0, coords, mode);
 
 		if (selection_buf)
 		{
@@ -1921,9 +2026,26 @@ static void on_key(GLFWwindow *window, int special, int scan, int action, int mo
 
 static void on_mouse_button(GLFWwindow *window, int button, int action, int mod)
 {
+	double now_time = glfwGetTime();
 	switch (button)
 	{
-	case GLFW_MOUSE_BUTTON_LEFT: ui.down = (action == GLFW_PRESS); break;
+	case GLFW_MOUSE_BUTTON_LEFT:
+		/* Check for double/tripple click. */
+		if (action == GLFW_PRESS)
+		{
+			if (ui.down_time == 0.0 || ui.down_time > now_time ||
+			    ui.down_time + DOUBLE_CLICK_SECONDS < now_time)
+			{
+				ui.down_time = now_time;
+				ui.down_count = 1;
+			}
+			else
+			{
+				ui.down_count++;
+			}
+		}
+		ui.down = (action == GLFW_PRESS);
+		break;
 	case GLFW_MOUSE_BUTTON_MIDDLE: ui.middle = (action == GLFW_PRESS); break;
 	case GLFW_MOUSE_BUTTON_RIGHT: ui.right = (action == GLFW_PRESS); break;
 	}
