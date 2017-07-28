@@ -438,6 +438,7 @@ static void pop_future(void)
 	push_history();
 }
 
+#ifndef _WIN32
 /*
   Set the X11 primary selection (as opposed to clipboard selection).
   The GLFW library does not seem to support the primary selection (issue
@@ -515,6 +516,7 @@ static void do_set_primary_selection(const char *data)
 		break;
 	}
 }
+#endif
 
 static void do_copy_region(fz_rect *screen_sel, int xofs, int yofs)
 {
@@ -543,9 +545,9 @@ static void do_copy_region(fz_rect *screen_sel, int xofs, int yofs)
 	buf = fz_new_buffer_from_page(ctx, which_page, &page_sel, 1, NULL);
 #else
 	buf = fz_new_buffer_from_page(ctx, which_page, &page_sel, 0, NULL);
+	do_set_primary_selection(fz_string_from_buffer(ctx, buf));
 #endif
 	glfwSetClipboardString(window, fz_string_from_buffer(ctx, buf));
-	do_set_primary_selection(fz_string_from_buffer(ctx, buf));
 	fz_drop_buffer(ctx, buf);
 }
 
@@ -1103,8 +1105,10 @@ static void do_char_selection(int x0, int y0, int x1, int y1)
 		if (selection_buf)
 		{
 			const char *text = fz_string_from_buffer(ctx, selection_buf);
-			glfwSetClipboardString(window, text);
+#ifndef _WIN32
 			do_set_primary_selection(text);
+#endif
+			glfwSetClipboardString(window, text);
 			fz_drop_buffer(ctx, selection_buf);
 			selection_buf = NULL;
 		}
