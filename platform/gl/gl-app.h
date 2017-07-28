@@ -57,6 +57,8 @@ struct ui
 {
 	int x, y;
 	int down, middle, right;
+	double down_time;
+	int down_count;
 	int scroll_x, scroll_y;
 	int key, mod;
 
