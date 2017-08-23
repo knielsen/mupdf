@@ -679,9 +679,10 @@ GLFW_SRC := \
 	input.c \
 	monitor.c \
 	nsgl_context.m \
-	posix_tls.c \
+	posix_thread.c \
 	vulkan.c \
-	window.c
+	window.c \
+	osmesa_context.c
 
 $(GLFW_OUT)/%.o: $(GLFW_DIR)/src/%.m | $(GLFW_OUT)
 	$(CC_CMD) -D_GLFW_COCOA -D_GLFW_USE_MENUBAR -D_GLFW_USE_RETINA -Wno-deprecated-declarations
@@ -706,13 +707,14 @@ GLFW_SRC := \
 	linux_joystick.c \
 	monitor.c \
 	posix_time.c \
-	posix_tls.c \
+	posix_thread.c \
 	vulkan.c \
 	window.c \
 	x11_init.c \
 	x11_monitor.c \
 	x11_window.c \
-	xkb_unicode.c
+	xkb_unicode.c \
+	osmesa_context.c
 
 $(GLFW_OUT)/%.o: $(GLFW_DIR)/src/%.c | $(GLFW_OUT)
 	$(CC_CMD) -D_GLFW_X11

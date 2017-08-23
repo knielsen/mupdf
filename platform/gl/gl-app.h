@@ -9,6 +9,10 @@ int win_open_file(char *buf, int len);
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
+#if !defined(_WIN32) && !defined(__APPLE__)
+#define GLFW_EXPOSE_NATIVE_X11
+#include <GLFW/glfw3native.h>
+#endif
 
 extern fz_context *ctx;
 extern GLFWwindow *window;
