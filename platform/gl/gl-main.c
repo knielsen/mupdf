@@ -821,14 +821,7 @@ static void select_region_line(fz_stext_line *l, fz_rect *coords, float xtop, fl
 						break;
 					++i;
 					fz_stext_char_bbox(ctx, &cbox, s, i);
-					if (cbox.x0 < bbox.x0)
-						bbox.x0 = cbox.x0;
-					if (cbox.y0 < bbox.y0)
-						bbox.y0 = cbox.y0;
-					if (cbox.x1 > bbox.x1)
-						bbox.x1 = cbox.x1;
-					if (cbox.y1 > bbox.y1)
-						bbox.y1 = cbox.y1;
+					fz_union_rect(&bbox, &cbox);
 				}
 			}
 			word_end = i;
@@ -847,14 +840,7 @@ static void select_region_line(fz_stext_line *l, fz_rect *coords, float xtop, fl
 				}
 				else
 				{
-					if (bbox.x0 < marked.x0)
-						marked.x0 = bbox.x0;
-					if (bbox.x1 > marked.x1)
-						marked.x1 = bbox.x1;
-					if (bbox.y0 < marked.y0)
-						marked.y0 = bbox.y0;
-					if (bbox.y1 > marked.y1)
-						marked.y1 = bbox.y1;
+					fz_union_rect(&marked, &bbox);
 				}
 				if (selection_buf)
 				{
@@ -1288,6 +1274,43 @@ static void auto_zoom(void)
 		auto_zoom_h();
 }
 
+static void auto_zoom_visible(void)
+{
+	fz_rect bbox;
+	fz_device *dev;
+	float w, h;
+	float page_a;
+	float screen_a;
+	float factor;
+	fz_matrix ctm = fz_identity;
+
+	dev = fz_new_bbox_device(ctx, &bbox);
+	fz_pre_rotate(&ctm, -currentrotate);
+	fz_run_page(ctx, page, dev, &ctm, NULL);
+	if (showdualpage && currentpage + 1 < fz_count_pages(ctx, doc))
+	{
+		fz_run_page(ctx, page2, dev, &ctm, NULL);
+	}
+
+	fz_close_device(ctx, dev);
+	fz_drop_device(ctx, dev);
+
+	w = bbox.x1 - bbox.x0;
+	h = bbox.y1 - bbox.y0;
+	if (h == 0.0f || w == 0.0f)
+		return;
+	page_a = w / h;
+	screen_a = (float) canvas_w / (float) canvas_h;
+	if (page_a > screen_a)
+		currentzoom = fz_clamp(72.0f * (float) canvas_w / w, MINRES, MAXRES);
+	else
+		currentzoom = fz_clamp(72.0f * (float) canvas_h / h, MINRES, MAXRES);
+	/* Center visible area on available canvas */
+	factor = currentzoom / 72.0f;
+	scroll_x = floorf(0.5f + bbox.x0*factor - 0.5f*((float) canvas_w - w*factor));
+	scroll_y = floorf(0.5f + bbox.y0*factor - 0.5f*((float) canvas_h - h*factor));
+}
+
 static void smart_move_backward(void)
 {
 	if (scroll_y <= 0)
@@ -1420,6 +1443,7 @@ static void do_app(void)
 		case 'W': auto_zoom_w(); break;
 		case 'H': auto_zoom_h(); break;
 		case 'Z': auto_zoom(); break;
+		case 'v': auto_zoom_visible(); break;
 		case 'z': currentzoom = number > 0 ? number : DEFRES; break;
 		case '+': currentzoom = zoom_in(currentzoom); break;
 		case '-': currentzoom = zoom_out(currentzoom); break;
@@ -1617,6 +1641,7 @@ static void do_help(void)
 	y = do_help_line(x, y, "w", "shrink wrap window");
 	y = do_help_line(x, y, "W or H", "fit to width or height");
 	y = do_help_line(x, y, "Z", "fit to page");
+	y = do_help_line(x, y, "v", "fit to visible");
 	y = do_help_line(x, y, "d", "dual-page mode");
 	y = do_help_line(x, y, "s", "single-page mode");
 	y = do_help_line(x, y, "y", "cycle through color schemes");
